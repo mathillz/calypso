@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% load agent_tags %}
+{% block title %}Chat - CodeCraft AI{% endblock %}
+{% block nav_chat %}active{% endblock %}
+
+{% block extra_css %}
+<style>
+  .chat-container {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 120px);
+  }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem 0;
+  }
+  .message {
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+    border-radius: 12px;
+    max-width: 85%;
+  }
+  .message-user {
+    background: rgba(108, 92, 231, 0.15);
+    border: 1px solid rgba(108, 92, 231, 0.3);
+    margin-left: auto;
+  }
+  .message-assistant {
+    background: var(--cc-card);
+    border: 1px solid var(--cc-border);
+  }
+  .message-role {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+    color: var(--cc-muted);
+  }
+  .message-user .message-role { color: var(--cc-secondary); }
+  .message-assistant .message-role { color: var(--cc-accent); }
+  .chat-input-area {
+    border-top: 1px solid var(--cc-border);
+    padding-top: 1rem;
+  }
+  .chat-input {
+    background: var(--cc-card);
+    border: 1px solid var(--cc-border);
+    color: var(--cc-text);
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    resize: none;
+  }
+  .chat-input:focus {
+    border-color: var(--cc-primary);
+    box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2);
+    color: var(--cc-text);
+    background: var(--cc-card);
+  }
+  .platform-selector .btn {
+    font-size: 0.8rem;
+    padding: 0.3rem 0.8rem;
+  }
+  .htmx-indicator {
+    display: none;
+  }
+  .htmx-request .htmx-indicator {
+    display: inline-block;
+  }
+  .typing-indicator {
+    display: inline-flex;
+    gap: 4px;
+    padding: 8px 16px;
+  }
+  .typing-indicator span {
+    width: 8px;
+    height: 8px;
+    background: var(--cc-primary);
+    border-radius: 50%;
+    animation: typing 1.4s infinite both;
+  }
+  .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typing {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-8px); opacity: 1; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h4 class="mb-0">
+        {% if conversation %}{{ conversation.title }}{% else %}<span class="gradient-text">New Chat</span>{% endif %}
+      </h4>
+      {% if conversation %}
+        <small class="text-muted">{{ conversation.get_platform_context_display }} Mode</small>
+      {% endif %}
+    </div>
+    <div class="platform-selector btn-group">
+      {% for id, name in platforms %}
+        <a href="{% url 'chat' %}?platform={{ id }}"
+           class="btn btn-outline-secondary {% if conversation and conversation.platform_context == id %}active{% endif %}">
+          {{ name }}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Messages Area -->
+  <div class="chat-messages" id="chat-messages">
+    {% if messages %}
+      {% for msg in messages %}
+        <div class="message message-{{ msg.role }}">
+          <div class="message-role">
+            {% if msg.role == "user" %}<i class="bi bi-person"></i> You{% else %}<i class="bi bi-cpu"></i> CodeCraft AI{% endif %}
+          </div>
+          <div class="message-content">{{ msg.content|render_markdown }}</div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-center py-5" id="empty-state">
+        <div class="mb-3">
+          <i class="bi bi-braces-asterisk" style="font-size: 3rem; color: var(--cc-primary);"></i>
+        </div>
+        <h4 class="gradient-text">What would you like to build?</h4>
+        <p class="text-muted">I can generate Django backends, React Native apps, Electron apps, and web templates.</p>
+        <div class="row g-2 justify-content-center mt-3">
+          <div class="col-auto">
+            <button class="btn btn-outline-primary btn-sm" onclick="setPrompt('Create a Django REST API with user authentication and CRUD endpoints')">
+              Django REST API
+            </button>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-outline-info btn-sm" onclick="setPrompt('Build a React Native app with tab navigation and a home screen')">
+              React Native App
+            </button>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-outline-warning btn-sm" onclick="setPrompt('Create an Electron app with a file manager and system tray')">
+              Electron App
+            </button>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-outline-success btn-sm" onclick="setPrompt('Build a Django web app with HTMX for a todo list')">
+              Django Web App
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- HTMX target for new messages -->
+    <div id="message-target"></div>
+
+    <!-- Loading indicator -->
+    <div class="htmx-indicator" id="loading-indicator">
+      <div class="message message-assistant">
+        <div class="message-role"><i class="bi bi-cpu"></i> CodeCraft AI</div>
+        <div class="typing-indicator">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input Area -->
+  <div class="chat-input-area">
+    <form hx-post="{% url 'htmx_send_message' %}"
+          hx-target="#message-target"
+          hx-swap="beforeend"
+          hx-indicator="#loading-indicator"
+          hx-on::after-request="this.reset(); scrollToBottom();"
+          id="chat-form">
+      {% csrf_token %}
+      {% if conversation %}
+        <input type="hidden" name="conversation_id" value="{{ conversation.id }}">
+      {% endif %}
+      <input type="hidden" name="platform" value="{% if conversation %}{{ conversation.platform_context }}{% else %}general{% endif %}" id="platform-input">
+
+      <div class="input-group">
+        <textarea class="form-control chat-input" name="message" rows="2"
+                  placeholder="Describe what you want to build..."
+                  id="message-input"
+                  onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();this.form.requestSubmit();}"></textarea>
+        <button class="btn btn-primary px-4" type="submit">
+          <i class="bi bi-send"></i>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function scrollToBottom() {
+    const container = document.getElementById('chat-messages');
+    container.scrollTop = container.scrollHeight;
+    // Remove empty state
+    const empty = document.getElementById('empty-state');
+    if (empty) empty.remove();
+  }
+
+  function setPrompt(text) {
+    document.getElementById('message-input').value = text;
+    document.getElementById('message-input').focus();
+  }
+
+  // Auto-scroll on new content
+  document.body.addEventListener('htmx:afterSwap', scrollToBottom);
+
+  // Scroll to bottom on page load
+  window.addEventListener('load', scrollToBottom);
+</script>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% load agent_tags %}
+<div class="message message-user">
+  <div class="message-role"><i class="bi bi-person"></i> You</div>
+  <div class="message-content">{{ user_message.content|render_markdown }}</div>
+</div>
+<div class="message message-assistant">
+  <div class="message-role"><i class="bi bi-cpu"></i> CodeCraft AI</div>
+  <div class="message-content">{{ assistant_message.content|render_markdown }}</div>
+</div>
+{% if conversation %}
+<input type="hidden" name="conversation_id" value="{{ conversation.id }}" hx-swap-oob="true" id="conv-id-field">
+{% endif %}
